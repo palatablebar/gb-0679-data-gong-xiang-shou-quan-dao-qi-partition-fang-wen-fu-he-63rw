@@ -1,0 +1,93 @@
+{% extends 'base.html' %}{% block terminal %}
+<div class="grid">
+  <section class="panel">
+    <div class="panel__head"><h2>$ share --publish</h2><span>{{board.violations|length}} 条越权放行</span></div>
+    <div class="panel__body">
+      <form id="share-form" class="share-form">
+        <label>接收方<input id="share-recipient" name="recipient" required placeholder="例如 partner-a"></label>
+        <fieldset><legend>资源范围</legend>{% for r in board.resources %}<label class="check"><input type="checkbox" name="resources" value="{{r.value}}" checked> {{r.label}}</label>{% endfor %}</fieldset>
+        <fieldset><legend>分区范围（留空为全部）</legend>{% for p in board.partitions %}<label class="check"><input type="checkbox" name="partitions" value="{{p}}"> {{p}}</label>{% endfor %}</fieldset>
+        <fieldset><legend>主体范围（留空为全部）</legend>{% for p in board.principals %}<label class="check"><input type="checkbox" name="principals" value="{{p}}"> {{p}}</label>{% endfor %}</fieldset>
+        <label class="check"><input id="share-note" type="checkbox"> 允许备注原值（仅在审批通过时勾选）</label>
+        <label>裁决依据（每行 事件号=说明，仅限范围内越权）<textarea id="share-explanations" rows="5" placeholder="00001=经批准的周期性对账访问，回执见附件"></textarea></label>
+        <button class="primary" type="submit">生成并发布摘要</button>
+        <span id="share-output" role="status"></span>
+      </form>
+      <p class="hint">隐藏记录只报告数量与合计，发布 + 隐藏 = 来源数；范围内存在未解释越权时整套摘要阻断，不导出任何行。</p>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel__head"><h2>$ share --workbench</h2><span>{{board.recipients|length}} 位接收方</span></div>
+    <div class="panel__body">
+      {% for r in board.recipients %}
+      <div class="share-recipient" data-recipient="{{r.recipient}}">
+        <h3>{{r.recipient}}
+          <small>{% if r.latest_published %}已发布 v{{r.latest_published.version}}{% else %}尚无发布版本{% endif %}{% if r.blocked_attempts %} · {{r.blocked_attempts|length}} 次阻断尝试{% endif %}</small>
+        </h3>
+        {% set s = r.latest_published or r.latest_attempt %}
+        {% if s %}
+        <div class="metric-grid">
+          <div class="metric"><span>来源记录</span><b>{{s.reconciliation.total_records}}</b></div>
+          <div class="metric"><span>范围内</span><b>{{s.reconciliation.in_scope_records}}</b></div>
+          <div class="metric"><span>已发布</span><b>{{s.reconciliation.published_records}}</b></div>
+          <div class="metric"><span>隐藏数量</span><b>{{s.reconciliation.withheld_records}}</b></div>
+          <div class="metric"><span>隐藏越权</span><b>{{s.hidden.withheld_violations}}</b></div>
+          <div class="metric"><span>行数对平</span><b>{{s.reconciliation.balanced}}</b></div>
+          <div class="metric"><span>应/实合计</span><b>{{s.reconciliation.expected_total}} / {{s.reconciliation.reported_total}}</b></div>
+          <div class="metric"><span>已解释越权</span><b>{{s.counts.explained_violations}}</b></div>
+          <div class="metric"><span>未解释越权</span><b>{{s.counts.unexplained_violations}}</b></div>
+          <div class="metric"><span>状态</span><b>{{s.status}}</b></div>
+        </div>
+
+        <h4>隐藏对账（按范围原因分组，不含原值）</h4>
+        <table class="terminal-table"><thead><tr><th>原因</th><th>隐藏行</th><th>其中越权</th><th>应/实合计</th></tr></thead><tbody>
+          {% for reason,group in s.hidden.breakdown.items() %}<tr><td>{{reason}}</td><td>{{group.records}}</td><td>{{group.violations}}</td><td>{{group.expected_total}} / {{group.reported_total}}</td></tr>{% endfor %}
+          <tr><td>备注隐藏</td><td>{{s.hidden.redacted_fields.get('note',0)}}</td><td>—</td><td>—</td></tr>
+        </tbody></table>
+
+        <h4>裁决依据</h4>
+        <ul class="basis">{% for b in s.basis %}<li><code>{{b.code}}</code> {{b.detail}}</li>{% endfor %}</ul>
+
+        {% if s.unexplained_violations %}
+        <div class="unexplained">
+          <h4>未解释越权（阻断发布）</h4>
+          <ul>{% for u in s.unexplained_violations %}<li>{{u.event_id}} · {{u.principal}} · {{u.resource}} · {{u.partition}} · {{u.rule_evidence}} · 差异 {{u.difference}}</li>{% endfor %}</ul>
+        </div>
+        {% endif %}
+        {% if not s.reconciliation.balanced %}
+        <p class="blocked">行数或合计未对平，隐藏部分无法核对，摘要不可发布。</p>
+        {% endif %}
+        {% endif %}
+
+        <h4>版本</h4>
+        <ul class="versions">{% for v in r.published_versions %}<li>v{{v.version}} · {{v.created_at[:19]}} · 发布 {{v.reconciliation.published_records}} / 隐藏 {{v.reconciliation.withheld_records}} · <a href="/api/runs/{{board.run_id}}/shares/{{r.recipient}}/{{v.version}}/export">CSV</a></li>{% else %}<li class="empty">暂无已发布版本。</li>{% endfor %}</ul>
+      </div>
+      {% else %}
+      <div class="empty">尚无共享摘要。选择接收方与范围后生成。</div>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel__head"><h2>$ share --differences</h2><span>越权放行证据</span></div>
+    <div class="table-scroll"><table class="terminal-table"><thead><tr><th>事件号</th><th>主体</th><th>资源</th><th>分区</th><th>命中规则</th><th>差异</th></tr></thead><tbody>
+      {% for v in board.violations %}<tr><td>{{v.event_id}}</td><td>{{v.principal}}</td><td>{{v.resource}}</td><td>{{v.partition}}</td><td>{{v.rule_evidence}}</td><td>{{v.difference}}</td></tr>{% else %}<tr><td class="empty">无越权放行。</td></tr>{% endfor %}
+    </tbody></table></div>
+  </section>
+</div>
+<script>
+(()=>{const form=document.querySelector('#share-form');const out=document.querySelector('#share-output');
+form.addEventListener('submit',async event=>{event.preventDefault();
+const chosen=name=>Array.from(form.querySelectorAll(`input[name="${name}"]:checked`)).map(x=>x.value);
+const explanations={};for(const line of document.querySelector('#share-explanations').value.split('\n')){const at=line.indexOf('=');if(at>0){const key=line.slice(0,at).trim();const text=line.slice(at+1).trim();if(key&&text)explanations[key]=text;}}
+const policy={resources:chosen('resources'),partitions:chosen('partitions'),principals:chosen('principals'),include_note:document.querySelector('#share-note').checked,explanations};
+out.textContent='发布中…';
+try{const response=await fetch(`/api/runs/${auditRecord.id}/shares`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({recipient:document.querySelector('#share-recipient').value.trim(),policy})});
+const body=await response.json();
+if(response.status===409){out.textContent=`已阻断：${body.differences.unexplained_violations.length} 条未解释越权，摘要未发布。`;setTimeout(()=>location.reload(),900);return;}
+if(!response.ok)throw Error(body.message||'发布失败');
+out.textContent=`已发布 v${body.version}（发布 ${body.reconciliation.published_records} / 隐藏 ${body.reconciliation.withheld_records}）`;setTimeout(()=>location.reload(),700);
+}catch(error){out.textContent=error.message;}});})();
+</script>
+{% endblock %}

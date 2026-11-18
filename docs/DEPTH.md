@@ -13,6 +13,18 @@
 | M5 分区判定 | 查看并运行分区判定 | `/api/partitions` | `app/modules/m5_partitions/rules.py` | `tests/test_m5.py` |
 | M6 访问对账 | 查看并运行访问对账 | `/api/audit` | `app/modules/m6_audit/rules.py` | `tests/test_m6.py` |
 | M7 审计归档 | 查看并运行审计归档 | `/api/seals` | `app/modules/m7_seals/rules.py` | `tests/test_m7.py` |
+| M8 共享摘要 | 为每位接收方整理可发布受控摘要 | `/api/shares`、`/api/runs/<id>/shares` | `app/modules/m8_shares/rules.py` | `tests/test_m8.py`、`tests/test_m8_api.py` |
+
+## 共享摘要裁决
+
+对外共享需要在「原值追查越权」与「最小必要」之间取舍，本项目交付可核对的受控摘要，而非整包阻断：
+
+- 发布字段白名单保留可追查越权所需的原值；备注等受限字段默认隐藏。
+- 隐藏不等于丢弃核对：`来源 = 范围内 + 范围外隐藏`，隐藏按范围原因分组输出行数、其中越权数与应/实合计，且范围内与隐藏两侧合计之和等于来源合计。
+- 工作台展示每位接收方的隐藏数量、裁决依据（范围、最小化、对账、血缘、逐条解释）与未解释差异。
+- 范围内仍有未解释的越权放行时整套摘要阻断：不出行、不占版本号，但在工作台保留完整计数供核对。
+- 接收方与规范化策略共同构成请求指纹；重试同一指纹复用首次结果，不新增版本。阻断尝试同样幂等，先发布过的旧版继续可导出。
+- 不完整或未发布的版本不能被导出，导出CSV末行为reconciliation汇总行。
 
 ## 陷阱登记
 
@@ -29,6 +41,11 @@
 | TRAP-07 | 上游结果空值 | 误报拒绝 | 隔离缺失 | `app/values.py` | `tests/test_m3.py::test_real_missing_decision_not_zero` |
 | TRAP-19 | 允许与拒绝重叠 | 后写覆盖 | 拒绝优先且排序证据 | `app/modules/m4_conflicts/rules.py` | `tests/test_m4.py::test_deny_priority_counterexample` |
 | TRAP-23 | 授权到期点 | 多放行一次 | 半开生效窗 | `app/modules/m3_grants/rules.py` | `tests/test_m3.py::test_expiry_endpoint_excluded` |
+| TRAP-27 | 共享重试 | 每次请求都新增版本 | 请求指纹幂等落版 | `app/store.py` | `tests/test_m8_api.py::test_share_retry_reuses_attempt_and_version` |
+| TRAP-28 | 隐藏记录 | 直接删行导致总数对不上 | 隐藏分组计数且两侧合计对平 | `app/modules/m8_shares/rules.py` | `tests/test_m8.py::test_published_summary_is_balanced_and_hides_notes` |
+| TRAP-29 | 未解释越权 | 照常带出行或悄悄裁掉 | 整套阻断且不占版本号 | `app/modules/m8_shares/rules.py` | `tests/test_m8.py::test_unexplained_violation_blocks_whole_summary` |
+| TRAP-30 | 发布失败后旧版 | 覆盖或删除旧摘要 | 旧版保留并可导出 | `app/store.py` | `tests/test_m8_api.py::test_blocked_attempt_stores_no_version_and_keeps_old` |
+| TRAP-31 | 备注泄露 | 整包导出带出备注 | 白名单输出，备注默认隐藏 | `app/modules/m8_shares/rules.py` | `tests/test_m8_api.py::test_note_exposure_requires_opt_in` |
 
 ## 对账规则
 
@@ -36,4 +53,4 @@
 
 ## 已知不覆盖
 
-4MB以上文件需预先按业务键分批；不模拟生产支付与外部回调。人工复核只变更批次状态，不改写原始记录。
+4MB以上文件需预先按业务键分批；不模拟生产支付与外部回调。人工复核只变更批次状态，不改写原始记录。共享摘要只做接收方范围的字段裁剪，不替代接收方侧的访问控制；`include_note` 属敏感选项，应由审批流程控制勾选。
